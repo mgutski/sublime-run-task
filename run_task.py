@@ -4,6 +4,7 @@ import os
 import json
 import subprocess
 import shlex
+import threading
 
 
 SUBLIME_FOLDER_NAME = ".sublime"
@@ -31,6 +32,21 @@ def find_file(path, name):
 	if file:
 		return os.path.join(path, file)
 	return None
+
+
+class ShellTaskThread(threading.Thread):
+	def __init__(self, window, args=[], cwd=None):
+		super(ShellTaskThread, self).__init__(self)
+		self.window = window
+		self.args = args
+		self.cwd = cwd
+
+	def run(self):
+		output_panel = self.window.create_output_panel("RunTask")
+		self.window.run_command("show_panel", {"panel": "output.RunTask"})
+		with subprocess.Popen(self.args, bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=self.cwd, universal_newlines=True) as proc:
+			out_line = proc.stdout.read()
+			output_panel.run_command("append", {"characters": out_line})
 
 
 class Task():
@@ -83,7 +99,7 @@ class Task():
 				args.extend(shlex.split(self.args.strip()))
 			for idx, arg in enumerate(args):
 				args[idx] = arg.replace(VARIABLE_CWD, cwd)
-			subprocess.Popen(args, cwd=cwd)
+			ShellTaskThread(window, args, cwd).start()
 
 
 class TasksParser():
@@ -113,7 +129,7 @@ class TasksParser():
 			if JSON_TASK_ARGS_KEY in task_json:
 				args = self.parse_task_args(task_type, task_json[JSON_TASK_ARGS_KEY])
 		if label is None or task_type is None or command is None:
-			sublime.error_message('RunTask: Invalid task definition')
+			sublime.error_message('Run Task: Invalid task definition')
 			return None
 		return Task(label, task_type, command, args)
 
@@ -168,4 +184,5 @@ class RunTaskCommand(sublime_plugin.WindowCommand):
 		if taskIndex < 0 or taskIndex >= len(self.tasks):
 			return
 		selectedTask = self.tasks[taskIndex]
+		print('Run Task: Running task "' + selectedTask.label + '"')
 		selectedTask.execute(window=self.window, cwd=self.workspace)
