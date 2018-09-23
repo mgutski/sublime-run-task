@@ -18,6 +18,8 @@ JSON_TASK_ARGS_KEY = "args"
 SUBLIME_TASK_TYPE = "sublime"
 SHELL_TASK_TYPE = "shell"
 
+VARIABLE_CWD = "${cwd}"
+
 def find_directory(path, name):
 	directory = next((directory for directory in os.listdir(path) if os.path.isdir(os.path.join(path, directory)) and directory == name), None)
 	if directory:
@@ -79,15 +81,16 @@ class Task():
 				args.extend(self.args)
 			elif type(self.args) is str:
 				args.extend(shlex.split(self.args.strip()))
-			useShell = os.name == "nt"
-			subprocess.Popen(args, cwd=cwd, shell=useShell)
+			for idx, arg in enumerate(args):
+				args[idx] = arg.replace(VARIABLE_CWD, cwd)
+			subprocess.Popen(args, cwd=cwd)
 
 
 class TasksParser():
 	def parse_tasks(self, tasks_json):
 		tasks = []
 		if type(tasks_json) is not dict:
-			sublime.error_message('RunTask: Invalid JSON format')
+			sublime.error_message('Run Task: Invalid JSON format')
 			return tasks
 		if JSON_TASKS_KEY in tasks_json and type(tasks_json[JSON_TASKS_KEY]) is list:
 			for task_json in tasks_json[JSON_TASKS_KEY]:
@@ -95,7 +98,7 @@ class TasksParser():
 				if task is not None:
 					tasks.append(task)
 		else:
-			sublime.error_message('RunTask: Invalid JSON - expected "tasks" list')
+			sublime.error_message('Run Task: Invalid JSON - expected "tasks" list')
 		return tasks
 
 	def parse_task(self, task_json):
