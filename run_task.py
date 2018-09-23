@@ -15,6 +15,7 @@ JSON_TASK_LABEL_KEY = "label"
 JSON_TASK_TYPE_KEY = "type"
 JSON_TASK_COMMAND_KEY = "command"
 JSON_TASK_ARGS_KEY = "args"
+JSON_TASK_SHOW_OUTPUT_PANEL_KEY = "show_output_panel"
 
 SUBLIME_TASK_TYPE = "sublime"
 SHELL_TASK_TYPE = "shell"
@@ -35,26 +36,31 @@ def find_file(path, name):
 
 
 class ShellTaskThread(threading.Thread):
-	def __init__(self, window, args=[], cwd=None):
+	def __init__(self, window, args=[], cwd=None, show_output_panel=True):
 		super(ShellTaskThread, self).__init__(self)
 		self.window = window
 		self.args = args
 		self.cwd = cwd
+		self.show_output_panel = show_output_panel
 
 	def run(self):
-		output_panel = self.window.create_output_panel("RunTask")
-		self.window.run_command("show_panel", {"panel": "output.RunTask"})
-		with subprocess.Popen(self.args, bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=self.cwd, universal_newlines=True) as proc:
-			out_line = proc.stdout.read()
-			output_panel.run_command("append", {"characters": out_line})
+		if self.show_output_panel:
+			output_panel = self.window.create_output_panel("RunTask")
+			self.window.run_command("show_panel", {"panel": "output.RunTask"})
+			with subprocess.Popen(self.args, bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=self.cwd, universal_newlines=True) as proc:
+				out_line = proc.stdout.read()
+				output_panel.run_command("append", {"characters": out_line})
+		else:
+			subprocess.Popen(self.args, cwd=self.cwd)
 
 
 class Task():
-	def __init__(self, label, task_type, command, args):
+	def __init__(self, label, task_type, command, args, show_output_panel):
 		self.label = label
 		self.task_type = task_type
 		self.command = command
 		self.args = args
+		self.show_output_panel = show_output_panel
 
 	def get_label(self):
 		return self._label
@@ -88,6 +94,14 @@ class Task():
 
 	args = property(get_args, set_args)
 
+	def get_show_output_panel(self):
+		return self._show_output_panel
+
+	def set_show_output_panel(self, value):
+		self._show_output_panel = value
+
+	show_output_panel = property(get_show_output_panel, set_show_output_panel)
+
 	def execute(self, window, cwd):
 		if self.task_type == SUBLIME_TASK_TYPE:
 			window.run_command(self.command, self.args)
@@ -99,7 +113,7 @@ class Task():
 				args.extend(shlex.split(self.args.strip()))
 			for idx, arg in enumerate(args):
 				args[idx] = arg.replace(VARIABLE_CWD, cwd)
-			ShellTaskThread(window, args, cwd).start()
+			ShellTaskThread(window, args, cwd, self.show_output_panel).start()
 
 
 class TasksParser():
@@ -109,16 +123,16 @@ class TasksParser():
 			sublime.error_message('Run Task: Invalid JSON format')
 			return tasks
 		if JSON_TASKS_KEY in tasks_json and type(tasks_json[JSON_TASKS_KEY]) is list:
-			for task_json in tasks_json[JSON_TASKS_KEY]:
-				task = self.parse_task(task_json)
+			for idx, task_json in enumerate(tasks_json[JSON_TASKS_KEY]):
+				task = self.parse_task(task_json, idx)
 				if task is not None:
 					tasks.append(task)
 		else:
 			sublime.error_message('Run Task: Invalid JSON - expected "tasks" list')
 		return tasks
 
-	def parse_task(self, task_json):
-		label, task_type, command, args = (None, None, None, None)
+	def parse_task(self, task_json, task_index):
+		label, task_type, command, args, show_output_panel = (None, None, None, None, True)
 		if type(task_json) is dict:
 			if JSON_TASK_LABEL_KEY in task_json:
 				label = self.parse_task_label(task_json[JSON_TASK_LABEL_KEY])
@@ -128,10 +142,12 @@ class TasksParser():
 				command = self.parse_task_command(task_json[JSON_TASK_COMMAND_KEY])
 			if JSON_TASK_ARGS_KEY in task_json:
 				args = self.parse_task_args(task_type, task_json[JSON_TASK_ARGS_KEY])
-		if label is None or task_type is None or command is None:
-			sublime.error_message('Run Task: Invalid task definition')
+			if JSON_TASK_SHOW_OUTPUT_PANEL_KEY in task_json:
+				show_output_panel = self.parse_task_show_output_panel(task_type, task_json[JSON_TASK_SHOW_OUTPUT_PANEL_KEY])
+		if label is None or task_type is None or command is None or show_output_panel is None:
+			sublime.error_message('Run Task: Invalid task number ' + str(task_index) + ' definition')
 			return None
-		return Task(label, task_type, command, args)
+		return Task(label, task_type, command, args, show_output_panel)
 
 	def parse_task_label(self, task_label):
 		if type(task_label) is not str or task_label.strip() == "":
@@ -154,6 +170,11 @@ class TasksParser():
 		if task_type == SHELL_TASK_TYPE and (type(task_args) is str or type(task_args) is list):
 			return task_args
 		return None
+
+	def parse_task_show_output_panel(self, task_type, task_show_output_panel):
+		if type(task_show_output_panel) is not bool:
+			return None
+		return task_show_output_panel
 
 
 class RunTaskCommand(sublime_plugin.WindowCommand):
