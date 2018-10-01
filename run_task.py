@@ -9,6 +9,7 @@ import threading
 
 SUBLIME_FOLDER_NAME = ".sublime"
 TASKS_FILE_NAME = "tasks.json"
+OUTPUT_PANEL_NAME = "run_task"
 
 JSON_TASKS_KEY = "tasks"
 JSON_TASK_LABEL_KEY = "label"
@@ -45,11 +46,18 @@ class ShellTaskThread(threading.Thread):
 
 	def run(self):
 		if self.show_output_panel:
-			output_panel = self.window.create_output_panel("RunTask")
-			self.window.run_command("show_panel", {"panel": "output.RunTask"})
-			with subprocess.Popen(self.args, bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=self.cwd, universal_newlines=True) as proc:
-				out_line = proc.stdout.read()
-				output_panel.run_command("append", {"characters": out_line})
+			output_panel = self.window.create_output_panel(OUTPUT_PANEL_NAME)
+			self.window.run_command("show_panel", {"panel": "output." + OUTPUT_PANEL_NAME})
+			process = subprocess.Popen(self.args, bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=self.cwd, universal_newlines=True)
+			while True:
+				out_line = process.stdout.readline()
+				if out_line == '' and process.poll() is not None:
+					finish_msg = "| Task finished with return code " + str(process.poll()) + " |"
+					finish_msg = "\n" + ("-" * len(finish_msg)) + "\n" + finish_msg + "\n" + ("-" * len(finish_msg))
+					output_panel.run_command("append", {"characters": finish_msg})
+					break
+				if out_line:
+					output_panel.run_command("append", {"characters": out_line})
 		else:
 			subprocess.Popen(self.args, cwd=self.cwd)
 
