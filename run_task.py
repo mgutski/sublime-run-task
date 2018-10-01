@@ -17,6 +17,7 @@ JSON_TASK_TYPE_KEY = "type"
 JSON_TASK_COMMAND_KEY = "command"
 JSON_TASK_ARGS_KEY = "args"
 JSON_TASK_SHOW_OUTPUT_PANEL_KEY = "show_output_panel"
+JSON_TASK_WINDOWS_CONFIG_KEY = "windows"
 
 SUBLIME_TASK_TYPE = "sublime"
 SHELL_TASK_TYPE = "shell"
@@ -140,19 +141,27 @@ class TasksParser():
 		return tasks
 
 	def parse_task(self, task_json, task_index):
-		label, task_type, command, args, show_output_panel = (None, None, None, None, True)
+		label, task_type, command, args, windows_config, show_output_panel = (None, None, None, None, {}, True)
 		if type(task_json) is dict:
 			if JSON_TASK_LABEL_KEY in task_json:
 				label = self.parse_task_label(task_json[JSON_TASK_LABEL_KEY])
 			if JSON_TASK_TYPE_KEY in task_json:
 				task_type = self.parse_task_type(task_json[JSON_TASK_TYPE_KEY])
-			if JSON_TASK_COMMAND_KEY in task_json:
-				command = self.parse_task_command(task_json[JSON_TASK_COMMAND_KEY])
-			if JSON_TASK_ARGS_KEY in task_json:
-				args = self.parse_task_args(task_type, task_json[JSON_TASK_ARGS_KEY])
+			if JSON_TASK_WINDOWS_CONFIG_KEY in task_json and os.name == 'nt':
+				windows_config = self.parse_task_windows_config(task_json[JSON_TASK_WINDOWS_CONFIG_KEY])
+			if JSON_TASK_COMMAND_KEY in task_json or (windows_config is not None and JSON_TASK_COMMAND_KEY in windows_config):
+				if JSON_TASK_COMMAND_KEY in windows_config:
+					command = self.parse_task_command(windows_config[JSON_TASK_COMMAND_KEY])
+				else:
+					command = self.parse_task_command(task_json[JSON_TASK_COMMAND_KEY])
+			if JSON_TASK_ARGS_KEY in task_json or (windows_config is not None and JSON_TASK_ARGS_KEY in windows_config):
+				if JSON_TASK_ARGS_KEY in windows_config:
+					args = self.parse_task_args(task_type, windows_config[JSON_TASK_ARGS_KEY])
+				else:
+					args = self.parse_task_args(task_type, task_json[JSON_TASK_ARGS_KEY])
 			if JSON_TASK_SHOW_OUTPUT_PANEL_KEY in task_json:
 				show_output_panel = self.parse_task_show_output_panel(task_type, task_json[JSON_TASK_SHOW_OUTPUT_PANEL_KEY])
-		if label is None or task_type is None or command is None or show_output_panel is None:
+		if label is None or task_type is None or command is None or windows_config is None or show_output_panel is None:
 			sublime.error_message('Run Task: Invalid task number ' + str(task_index) + ' definition')
 			return None
 		return Task(label, task_type, command, args, show_output_panel)
@@ -178,6 +187,11 @@ class TasksParser():
 		if task_type == SHELL_TASK_TYPE and (type(task_args) is str or type(task_args) is list):
 			return task_args
 		return None
+
+	def parse_task_windows_config(self, task_windows_config):
+		if type(task_windows_config) is not dict:
+			return None
+		return task_windows_config
 
 	def parse_task_show_output_panel(self, task_type, task_show_output_panel):
 		if type(task_show_output_panel) is not bool:
