@@ -7,6 +7,8 @@ import shlex
 import threading
 
 
+PLUGIN_NAME = "Run Task"
+
 SUBLIME_FOLDER_NAME = ".sublime"
 TASKS_FILE_NAME = "tasks.json"
 OUTPUT_PANEL_NAME = "run_task"
@@ -19,27 +21,104 @@ JSON_TASK_ARGS_KEY = "args"
 JSON_TASK_SHOW_OUTPUT_PANEL_KEY = "show_output_panel"
 JSON_TASK_WINDOWS_CONFIG_KEY = "windows"
 
+JSON_TASK_SHOW_OUTPUT_PANEL_DEFAULT_VALUE = True
+
 SUBLIME_TASK_TYPE = "sublime"
 SHELL_TASK_TYPE = "shell"
 
 VARIABLE_CWD = "${cwd}"
 
-def find_directory(path, name):
-	directory = next((directory for directory in os.listdir(path) if os.path.isdir(os.path.join(path, directory)) and directory == name), None)
-	if directory:
-		return os.path.join(path, directory)
-	return None
 
-def find_file(path, name):
-	file = next((file for file in os.listdir(path) if os.path.isfile(os.path.join(path, file)) and file == name), None)
-	if file:
-		return os.path.join(path, file)
-	return None
+class OSUtils():
+	@staticmethod
+	def find_directory(path, name):
+		directory = next((directory for directory in os.listdir(path) if os.path.isdir(os.path.join(path, directory)) and directory == name), None)
+		if directory:
+			return os.path.join(path, directory)
+		return None
+
+	@staticmethod
+	def find_file(path, name):
+		file = next((file for file in os.listdir(path) if os.path.isfile(os.path.join(path, file)) and file == name), None)
+		if file:
+			return os.path.join(path, file)
+		return None
+
+	@staticmethod
+	def is_windows():
+		return os.name == 'nt'
+
+
+class ErrorMessage():
+
+	EXPECTED_BOOL_VALUE = 'Expected a boolean value.'
+	EXPECTED_JSON_OBJECT = 'Expected a JSON object.'
+	EXPECTED_STRING_OR_ARRAY = 'Expected a string or array value.'
+	EXPECTED_NON_EMPTY_STRING = 'Expected a non-empty string with at least one non-whitespace character.'
+	EXPECTED_TASK_TYPE = 'Expected "' + SHELL_TASK_TYPE + '" or "' + SUBLIME_TASK_TYPE + '".'
+
+	CHECK_CONFIGURATION_FILE = 'Please check the tasks configuration file (' + TASKS_FILE_NAME + ').'
+
+	@staticmethod
+	def invalid_json():
+		return PLUGIN_NAME + ': Invalid JSON. ' + ErrorMessage.CHECK_CONFIGURATION_FILE
+
+	@staticmethod
+	def invalid_json_object(expected_type_name=None):
+		error_message = PLUGIN_NAME + ': Invalid JSON object. '
+		if expected_type_name is not None:
+			error_message += 'Expected ' + expected_type_name + '. '
+		error_message += ErrorMessage.CHECK_CONFIGURATION_FILE
+		return error_message
+
+	@staticmethod
+	def invalid_json_task_definition(task_index, task_error_message=None):
+		error_message = PLUGIN_NAME + ': Invalid JSON task definition at index ' + str(task_index) + '. '
+		error_message += ErrorMessage.CHECK_CONFIGURATION_FILE
+		if task_error_message is not None:
+			error_message += '\n\nError message: ' + task_error_message
+		return error_message
+
+	@staticmethod
+	def invalid_field_value(field_name, value_error_message=None):
+		error_message = 'Invalid value for field "' + field_name + '".'
+		if value_error_message is not None:
+			error_message += ' ' + value_error_message
+		return error_message
+
+	@staticmethod
+	def missing_required_field(field_name):
+		return 'Missing required field "' + field_name + '".'
+
+	@staticmethod
+	def task_execution_failed(task_label, execution_error_message=None):
+		error_message = PLUGIN_NAME + ': Execution failed for task "' + task_label + '".'
+		if execution_error_message is not None:
+			error_message += '\n\nError message: ' + execution_error_message
+		return error_message
+
+
+class OutputPanel():
+	def __init__(self, window):
+		self.window = window
+		self.panel_view = None
+
+	def show(self):
+		self.panel_view = self.__create_panel_view()
+		self.window.run_command("show_panel", {"panel": "output." + OUTPUT_PANEL_NAME})
+
+	def write(self, message):
+		if self.panel_view is not None:
+			self.panel_view.run_command("append", {"characters": message})
+
+	def __create_panel_view(self):
+		return self.window.create_output_panel(OUTPUT_PANEL_NAME)
 
 
 class ShellTaskThread(threading.Thread):
-	def __init__(self, window, args=[], cwd=None, show_output_panel=True):
+	def __init__(self, task_label, window, args=[], cwd=None, show_output_panel=False):
 		super(ShellTaskThread, self).__init__(self)
+		self.task_label = task_label
 		self.window = window
 		self.args = args
 		self.cwd = cwd
@@ -47,20 +126,27 @@ class ShellTaskThread(threading.Thread):
 
 	def run(self):
 		if self.show_output_panel:
-			output_panel = self.window.create_output_panel(OUTPUT_PANEL_NAME)
-			self.window.run_command("show_panel", {"panel": "output." + OUTPUT_PANEL_NAME})
-			process = subprocess.Popen(self.args, bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=self.cwd, universal_newlines=True)
+			output_panel = OutputPanel(self.window)
+			output_panel.show()
+			try:
+				process = subprocess.Popen(self.args, bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=self.cwd, universal_newlines=True)
+			except Exception as ex:
+				sublime.error_message(ErrorMessage.task_execution_failed(self.task_label, str(ex)))
+				return
 			while True:
 				out_line = process.stdout.readline()
 				if out_line == '' and process.poll() is not None:
 					finish_msg = "| Task finished with return code " + str(process.poll()) + " |"
 					finish_msg = "\n" + ("-" * len(finish_msg)) + "\n" + finish_msg + "\n" + ("-" * len(finish_msg))
-					output_panel.run_command("append", {"characters": finish_msg})
+					output_panel.write(finish_msg)
 					break
 				if out_line:
-					output_panel.run_command("append", {"characters": out_line})
+					output_panel.write(out_line)
 		else:
-			subprocess.Popen(self.args, cwd=self.cwd)
+			try:
+				subprocess.Popen(self.args, cwd=self.cwd)
+			except Exception as ex:
+				sublime.error_message(ErrorMessage.task_execution_failed(self.task_label, str(ex)))
 
 
 class Task():
@@ -122,81 +208,117 @@ class Task():
 				args.extend(shlex.split(self.args.strip()))
 			for idx, arg in enumerate(args):
 				args[idx] = arg.replace(VARIABLE_CWD, cwd)
-			ShellTaskThread(window, args, cwd, self.show_output_panel).start()
+			ShellTaskThread(self.label, window, args, cwd, self.show_output_panel).start()
 
 
-class TasksParser():
+class TaskParser():
 	def parse_tasks(self, tasks_json):
 		tasks = []
 		if type(tasks_json) is not dict:
-			sublime.error_message('Run Task: Invalid JSON format')
-			return tasks
+			return None, ErrorMessage.invalid_json_object()
 		if JSON_TASKS_KEY in tasks_json and type(tasks_json[JSON_TASKS_KEY]) is list:
+			parse_error_msg = None
 			for idx, task_json in enumerate(tasks_json[JSON_TASKS_KEY]):
-				task = self.parse_task(task_json, idx)
+				task, parse_error_msg = self.parse_task(task_json)
 				if task is not None:
 					tasks.append(task)
+				elif parse_error_msg is not None:
+					return None, ErrorMessage.invalid_json_task_definition(idx, parse_error_msg)
 		else:
-			sublime.error_message('Run Task: Invalid JSON - expected "tasks" list')
-		return tasks
+			return None, ErrorMessage.invalid_json_object(expectedTypeName='"' + JSON_TASKS_KEY + '" array')
+		return tasks, None
 
-	def parse_task(self, task_json, task_index):
-		label, task_type, command, args, windows_config, show_output_panel = (None, None, None, None, {}, True)
+	def parse_task(self, task_json):
+		label, task_type, command, args, windows_config, show_output_panel = (None, None, None, None, None, None)
+		parse_error_msg = None
 		if type(task_json) is dict:
-			if JSON_TASK_LABEL_KEY in task_json:
-				label = self.parse_task_label(task_json[JSON_TASK_LABEL_KEY])
-			if JSON_TASK_TYPE_KEY in task_json:
-				task_type = self.parse_task_type(task_json[JSON_TASK_TYPE_KEY])
-			if JSON_TASK_WINDOWS_CONFIG_KEY in task_json and os.name == 'nt':
-				windows_config = self.parse_task_windows_config(task_json[JSON_TASK_WINDOWS_CONFIG_KEY])
-			if JSON_TASK_COMMAND_KEY in task_json or (windows_config is not None and JSON_TASK_COMMAND_KEY in windows_config):
-				if JSON_TASK_COMMAND_KEY in windows_config:
-					command = self.parse_task_command(windows_config[JSON_TASK_COMMAND_KEY])
+			label, parse_error_msg = self.__parse_task_label(task_json)
+			if parse_error_msg is None:
+				task_type, parse_error_msg = self.__parse_task_type(task_json)
+			if parse_error_msg is None:
+				windows_config, parse_error_msg = self.__parse_task_windows_config(task_json)
+			if parse_error_msg is None:
+				if windows_config is not None:
+					command, parse_error_msg = self.__parse_task_command(windows_config)
+					if parse_error_msg is None:
+						args, parse_error_msg = self.__parse_task_args(task_type, windows_config)
 				else:
-					command = self.parse_task_command(task_json[JSON_TASK_COMMAND_KEY])
-			if JSON_TASK_ARGS_KEY in task_json or (windows_config is not None and JSON_TASK_ARGS_KEY in windows_config):
-				if JSON_TASK_ARGS_KEY in windows_config:
-					args = self.parse_task_args(task_type, windows_config[JSON_TASK_ARGS_KEY])
-				else:
-					args = self.parse_task_args(task_type, task_json[JSON_TASK_ARGS_KEY])
-			if JSON_TASK_SHOW_OUTPUT_PANEL_KEY in task_json:
-				show_output_panel = self.parse_task_show_output_panel(task_type, task_json[JSON_TASK_SHOW_OUTPUT_PANEL_KEY])
-		if label is None or task_type is None or command is None or windows_config is None or show_output_panel is None:
-			sublime.error_message('Run Task: Invalid task number ' + str(task_index) + ' definition')
-			return None
-		return Task(label, task_type, command, args, show_output_panel)
+					command, parse_error_msg = self.__parse_task_command(task_json)
+					if parse_error_msg is None:
+						args, parse_error_msg = self.__parse_task_args(task_type, task_json)
+			if parse_error_msg is None:
+				show_output_panel, parse_error_msg = self.__parse_task_show_output_panel(task_json)
+		if parse_error_msg is not None:
+			return None, parse_error_msg
+		return Task(label, task_type, command, args, show_output_panel), None
 
-	def parse_task_label(self, task_label):
+	def __parse_task_label(self, task_json):
+		task_label = None
+		if JSON_TASK_LABEL_KEY in task_json:
+			task_label = task_json[JSON_TASK_LABEL_KEY]
+		else:
+			return None, ErrorMessage.missing_required_field(JSON_TASK_LABEL_KEY)
 		if type(task_label) is not str or task_label.strip() == "":
-			return None
-		return task_label.strip()
+			return None, ErrorMessage.invalid_field_value(JSON_TASK_LABEL_KEY, ErrorMessage.EXPECTED_NON_EMPTY_STRING)
+		return task_label.strip(), None
 
-	def parse_task_type(self, task_type):
+	def __parse_task_type(self, task_json):
+		task_type = None
+		if JSON_TASK_TYPE_KEY in task_json:
+			task_type = task_json[JSON_TASK_TYPE_KEY]
+		else:
+			return None, ErrorMessage.missing_required_field(JSON_TASK_TYPE_KEY)
 		if type(task_type) is not str or (task_type != SUBLIME_TASK_TYPE and task_type != SHELL_TASK_TYPE):
-			return None
-		return task_type
+			return None, ErrorMessage.invalid_field_value(JSON_TASK_TYPE_KEY, ErrorMessage.EXPECTED_TASK_TYPE)
+		return task_type, None
 
-	def parse_task_command(self, task_command):
+	def __parse_task_command(self, task_json):
+		task_command = None
+		if JSON_TASK_COMMAND_KEY in task_json:
+			task_command = task_json[JSON_TASK_COMMAND_KEY]
+		else:
+			return None, ErrorMessage.missing_required_field(JSON_TASK_COMMAND_KEY)
 		if type(task_command) is not str or task_command.strip() == "":
-			return None
-		return task_command.strip()
+			return None, ErrorMessage.invalid_field_value(JSON_TASK_COMMAND_KEY, ErrorMessage.EXPECTED_NON_EMPTY_STRING)
+		return task_command.strip(), None
 
-	def parse_task_args(self, task_type, task_args):
-		if task_type == SUBLIME_TASK_TYPE and type(task_args) is dict:
-			return task_args
-		if task_type == SHELL_TASK_TYPE and (type(task_args) is str or type(task_args) is list):
-			return task_args
-		return None
+	def __parse_task_args(self, task_type, task_json):
+		task_args = None
+		if JSON_TASK_ARGS_KEY in task_json:
+			task_args = task_json[JSON_TASK_ARGS_KEY]
+		else:
+			return None, None
+		if task_type == SUBLIME_TASK_TYPE:
+			if type(task_args) is dict:
+				return task_args, None
+			else:
+				return None, ErrorMessage.invalid_field_value(JSON_TASK_ARGS_KEY, ErrorMessage.EXPECTED_JSON_OBJECT)
+		if task_type == SHELL_TASK_TYPE:
+			if (type(task_args) is str or type(task_args) is list):
+				return task_args, None
+			else:
+				return None, ErrorMessage.invalid_field_value(JSON_TASK_ARGS_KEY, ErrorMessage.EXPECTED_STRING_OR_ARRAY)
+		return None, ErrorMessage.invalid_field_value(JSON_TASK_ARGS_KEY)
 
-	def parse_task_windows_config(self, task_windows_config):
+	def __parse_task_windows_config(self, task_json):
+		task_windows_config = None
+		if JSON_TASK_WINDOWS_CONFIG_KEY in task_json and OSUtils.is_windows():
+			task_windows_config = task_json[JSON_TASK_WINDOWS_CONFIG_KEY]
+		else:
+			return None, None
 		if type(task_windows_config) is not dict:
-			return None
-		return task_windows_config
+			return None, ErrorMessage.invalid_field_value(JSON_TASK_WINDOWS_CONFIG_KEY, ErrorMessage.EXPECTED_JSON_OBJECT)
+		return task_windows_config, None
 
-	def parse_task_show_output_panel(self, task_type, task_show_output_panel):
+	def __parse_task_show_output_panel(self, task_json):
+		task_show_output_panel = None
+		if JSON_TASK_SHOW_OUTPUT_PANEL_KEY in task_json:
+			task_show_output_panel = task_json[JSON_TASK_SHOW_OUTPUT_PANEL_KEY]
+		else:
+			return JSON_TASK_SHOW_OUTPUT_PANEL_DEFAULT_VALUE, None
 		if type(task_show_output_panel) is not bool:
-			return None
-		return task_show_output_panel
+			return None, ErrorMessage.invalid_field_value(JSON_TASK_SHOW_OUTPUT_PANEL_KEY, ErrorMessage.EXPECTED_BOOL_VALUE)
+		return task_show_output_panel, None
 
 
 class RunTaskCommand(sublime_plugin.WindowCommand):
@@ -208,17 +330,21 @@ class RunTaskCommand(sublime_plugin.WindowCommand):
 		self.workspace = folders[0]
 		self.tasks = []
 
-		sublime_folder = find_directory(self.workspace, SUBLIME_FOLDER_NAME)
+		sublime_folder = OSUtils.find_directory(self.workspace, SUBLIME_FOLDER_NAME)
 
 		if sublime_folder:
-			tasks_file = find_file(sublime_folder, TASKS_FILE_NAME)
+			tasks_file = OSUtils.find_file(sublime_folder, TASKS_FILE_NAME)
 			if tasks_file:
 				with open(tasks_file, "r") as fp:
 					try:
 						tasks_json = json.load(fp)
-						self.tasks = TasksParser().parse_tasks(tasks_json)
+						self.tasks, parse_error_msg = TaskParser().parse_tasks(tasks_json)
+						if parse_error_msg is not None:
+							sublime.error_message(parse_error_msg)
+							return
 					except ValueError:
-						pass
+						sublime.error_message(ErrorMessage.invalid_json())
+						return
 				if len(self.tasks) > 0:
 					labels = list(map(lambda task: task.label, self.tasks))
 					self.window.show_quick_panel(labels, self.on_done, sublime.MONOSPACE_FONT, 0, None)
@@ -227,5 +353,5 @@ class RunTaskCommand(sublime_plugin.WindowCommand):
 		if taskIndex < 0 or taskIndex >= len(self.tasks):
 			return
 		selectedTask = self.tasks[taskIndex]
-		print('Run Task: Running task "' + selectedTask.label + '"')
+		print(PLUGIN_NAME + ': Running task "' + selectedTask.label + '"')
 		selectedTask.execute(window=self.window, cwd=self.workspace)
