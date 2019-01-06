@@ -1,0 +1,14 @@
+[
+    {
+        "caption": "Preferences: Run Task Key Bindings",
+        "command": "edit_settings", 
+        "args": {
+            "base_file": "${packages}/Run Task/keymaps/Default ($platform).sublime-keymap",
+            "default": "${packages}/User/Default ($platform).sublime-keymap"
+        }
+    },
+    {
+        "caption": "Run Task",
+        "command": "run_task"
+    }
+]
