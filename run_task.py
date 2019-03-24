@@ -1,5 +1,6 @@
 import sublime
 import sublime_plugin
+import fnmatch
 import os
 import json
 import subprocess
@@ -9,12 +10,11 @@ import threading
 
 PLUGIN_NAME = "Run Task"
 
-SUBLIME_FOLDER_NAME = ".sublime"
-TASKS_FILE_NAME = "tasks.json"
+PROJECT_FILE_NAME_PATTERN = "*.sublime-project"
 OUTPUT_PANEL_NAME = "run_task"
 
-JSON_TASKS_KEY = "tasks"
-JSON_TASK_LABEL_KEY = "label"
+JSON_TASKS_KEY = PLUGIN_NAME + ".tasks"
+JSON_TASK_NAME_KEY = "name"
 JSON_TASK_TYPE_KEY = "type"
 JSON_TASK_COMMAND_KEY = "command"
 JSON_TASK_ARGS_KEY = "args"
@@ -45,6 +45,13 @@ class OSUtils():
 		return None
 
 	@staticmethod
+	def find_file_with_pattern(path, pattern):
+		file = next((file for file in os.listdir(path) if os.path.isfile(os.path.join(path, file)) and fnmatch.fnmatch(file, pattern)), None)
+		if file:
+			return os.path.join(path, file)
+		return None
+
+	@staticmethod
 	def is_windows():
 		return os.name == 'nt'
 
@@ -57,7 +64,7 @@ class ErrorMessage():
 	EXPECTED_NON_EMPTY_STRING = 'Expected a non-empty string with at least one non-whitespace character.'
 	EXPECTED_TASK_TYPE = 'Expected "' + SHELL_TASK_TYPE + '" or "' + SUBLIME_TASK_TYPE + '".'
 
-	CHECK_CONFIGURATION_FILE = 'Please check the tasks configuration file (' + TASKS_FILE_NAME + ').'
+	CHECK_CONFIGURATION_FILE = 'Please check the .sublime-project file.'
 
 	@staticmethod
 	def invalid_json():
@@ -91,8 +98,8 @@ class ErrorMessage():
 		return 'Missing required field "' + field_name + '".'
 
 	@staticmethod
-	def task_execution_failed(task_label, execution_error_message=None):
-		error_message = PLUGIN_NAME + ': Execution failed for task "' + task_label + '".'
+	def task_execution_failed(task_name, execution_error_message=None):
+		error_message = PLUGIN_NAME + ': Execution failed for task "' + task_name + '".'
 		if execution_error_message is not None:
 			error_message += '\n\nError message: ' + execution_error_message
 		return error_message
@@ -116,9 +123,9 @@ class OutputPanel():
 
 
 class ShellTaskThread(threading.Thread):
-	def __init__(self, task_label, window, args=[], cwd=None, show_output_panel=False):
+	def __init__(self, task_name, window, args=[], cwd=None, show_output_panel=False):
 		super(ShellTaskThread, self).__init__(self)
-		self.task_label = task_label
+		self.task_name = task_name
 		self.window = window
 		self.args = args
 		self.cwd = cwd
@@ -131,7 +138,7 @@ class ShellTaskThread(threading.Thread):
 			try:
 				process = subprocess.Popen(self.args, bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=self.cwd, universal_newlines=True)
 			except Exception as ex:
-				sublime.error_message(ErrorMessage.task_execution_failed(self.task_label, str(ex)))
+				sublime.error_message(ErrorMessage.task_execution_failed(self.task_name, str(ex)))
 				return
 			while True:
 				out_line = process.stdout.readline()
@@ -146,24 +153,24 @@ class ShellTaskThread(threading.Thread):
 			try:
 				subprocess.Popen(self.args, cwd=self.cwd)
 			except Exception as ex:
-				sublime.error_message(ErrorMessage.task_execution_failed(self.task_label, str(ex)))
+				sublime.error_message(ErrorMessage.task_execution_failed(self.task_name, str(ex)))
 
 
 class Task():
-	def __init__(self, label, task_type, command, args, show_output_panel):
-		self.label = label
+	def __init__(self, name, task_type, command, args, show_output_panel):
+		self.name = name
 		self.task_type = task_type
 		self.command = command
 		self.args = args
 		self.show_output_panel = show_output_panel
 
-	def get_label(self):
-		return self._label
+	def get_name(self):
+		return self._name
 
-	def set_label(self, value):
-		self._label = value
+	def set_name(self, value):
+		self._name = value
 
-	label = property(get_label, set_label)
+	name = property(get_name, set_name)
 
 	def get_task_type(self):
 		return self._task_type
@@ -208,7 +215,7 @@ class Task():
 				args.extend(shlex.split(self.args.strip()))
 			for idx, arg in enumerate(args):
 				args[idx] = arg.replace(VARIABLE_CWD, cwd)
-			ShellTaskThread(self.label, window, args, cwd, self.show_output_panel).start()
+			ShellTaskThread(self.name, window, args, cwd, self.show_output_panel).start()
 
 
 class TaskParser():
@@ -229,10 +236,10 @@ class TaskParser():
 		return tasks, None
 
 	def parse_task(self, task_json):
-		label, task_type, command, args, windows_config, show_output_panel = (None, None, None, None, None, None)
+		name, task_type, command, args, windows_config, show_output_panel = (None, None, None, None, None, None)
 		parse_error_msg = None
 		if type(task_json) is dict:
-			label, parse_error_msg = self.__parse_task_label(task_json)
+			name, parse_error_msg = self.__parse_task_name(task_json)
 			if parse_error_msg is None:
 				task_type, parse_error_msg = self.__parse_task_type(task_json)
 			if parse_error_msg is None:
@@ -250,17 +257,17 @@ class TaskParser():
 				show_output_panel, parse_error_msg = self.__parse_task_show_output_panel(task_json)
 		if parse_error_msg is not None:
 			return None, parse_error_msg
-		return Task(label, task_type, command, args, show_output_panel), None
+		return Task(name, task_type, command, args, show_output_panel), None
 
-	def __parse_task_label(self, task_json):
-		task_label = None
-		if JSON_TASK_LABEL_KEY in task_json:
-			task_label = task_json[JSON_TASK_LABEL_KEY]
+	def __parse_task_name(self, task_json):
+		task_name = None
+		if JSON_TASK_NAME_KEY in task_json:
+			task_name = task_json[JSON_TASK_NAME_KEY]
 		else:
-			return None, ErrorMessage.missing_required_field(JSON_TASK_LABEL_KEY)
-		if type(task_label) is not str or task_label.strip() == "":
-			return None, ErrorMessage.invalid_field_value(JSON_TASK_LABEL_KEY, ErrorMessage.EXPECTED_NON_EMPTY_STRING)
-		return task_label.strip(), None
+			return None, ErrorMessage.missing_required_field(JSON_TASK_NAME_KEY)
+		if type(task_name) is not str or task_name.strip() == "":
+			return None, ErrorMessage.invalid_field_value(JSON_TASK_NAME_KEY, ErrorMessage.EXPECTED_NON_EMPTY_STRING)
+		return task_name.strip(), None
 
 	def __parse_task_type(self, task_json):
 		task_type = None
@@ -330,28 +337,25 @@ class RunTaskCommand(sublime_plugin.WindowCommand):
 		self.workspace = folders[0]
 		self.tasks = []
 
-		sublime_folder = OSUtils.find_directory(self.workspace, SUBLIME_FOLDER_NAME)
-
-		if sublime_folder:
-			tasks_file = OSUtils.find_file(sublime_folder, TASKS_FILE_NAME)
-			if tasks_file:
-				with open(tasks_file, "r") as fp:
-					try:
-						tasks_json = json.load(fp)
-						self.tasks, parse_error_msg = TaskParser().parse_tasks(tasks_json)
-						if parse_error_msg is not None:
-							sublime.error_message(parse_error_msg)
-							return
-					except ValueError:
-						sublime.error_message(ErrorMessage.invalid_json())
+		project_file = OSUtils.find_file_with_pattern(self.workspace, PROJECT_FILE_NAME_PATTERN)
+		if project_file:
+			with open(project_file, "r") as fp:
+				try:
+					tasks_json = json.load(fp)
+					self.tasks, parse_error_msg = TaskParser().parse_tasks(tasks_json)
+					if parse_error_msg is not None:
+						sublime.error_message(parse_error_msg)
 						return
-				if len(self.tasks) > 0:
-					labels = list(map(lambda task: task.label, self.tasks))
-					self.window.show_quick_panel(labels, self.on_done, sublime.MONOSPACE_FONT, 0, None)
+				except ValueError:
+					sublime.error_message(ErrorMessage.invalid_json())
+					return
+			if len(self.tasks) > 0:
+				labels = list(map(lambda task: task.name, self.tasks))
+				self.window.show_quick_panel(labels, self.on_done, sublime.MONOSPACE_FONT, 0, None)
 
 	def on_done(self, taskIndex):
 		if taskIndex < 0 or taskIndex >= len(self.tasks):
 			return
 		selectedTask = self.tasks[taskIndex]
-		print(PLUGIN_NAME + ': Running task "' + selectedTask.label + '"')
+		print(PLUGIN_NAME + ': Running task "' + selectedTask.name + '"')
 		selectedTask.execute(window=self.window, cwd=self.workspace)

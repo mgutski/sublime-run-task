@@ -25,19 +25,32 @@ Run Task package can be installed manually by cloning this Git repository into y
 
 ## Usage
 
-In a root directory of your project, create a folder named `.sublime`, and then inside that folder create a file named `tasks.json`.
+Open or create the `.sublime-project` file, which is the file that contains your project definition. 
 
 <p>
-	<img src="docs/usage_screenshot.png" alt="Usage" width="50%" draggable="false">
+    <img src="docs/usage_screenshot.png" alt="Usage" width="50%" draggable="false">
 </p>
 
-Open the created `tasks.json` file and add JSON tasks definitions, as in the example below. Please note that all tasks definitions must be contained in the top level `tasks` array.
+Add `Run Task.tasks` top level section with JSON tasks definitions, as in the example below.
 
 ```json
 {
-    "tasks": [
+    "folders":
+    [
         {
-            "label": "Run Unit Tests",
+            "path": ".",
+            "folder_exclude_patterns": [".idea", ".vscode"],
+            "file_exclude_patterns": [".gitignore", ".gitattributes", ".gitmodules", ".firebaserc"]
+        }
+    ],
+    "settings":
+    {
+        "tab_size": 4
+    },
+    "Run Task.tasks": 
+    [
+        {
+            "name": "Run Unit Tests",
             "type": "shell",
             "command": "./Tests/run_unit_tests.sh",
             "windows": {
@@ -46,7 +59,7 @@ Open the created `tasks.json` file and add JSON tasks definitions, as in the exa
             }
         },
         {
-            "label": "Start Local Web Server",
+            "name": "Start Local Web Server",
             "type": "shell",
             "command": "osascript",
             "args": "-e 'tell app \"Terminal\" to activate' -e 'tell app \"Terminal\" to do script \"cd ${cwd} && ./Debug/run-http-server.sh\"'",
@@ -57,7 +70,7 @@ Open the created `tasks.json` file and add JSON tasks definitions, as in the exa
             "show_output_panel": false
         },
         {
-            "label": "Generate Docs",
+            "name": "Generate Docs",
             "type": "shell",
             "command": "./Source/scripts/generate_docs.sh",
             "windows": {
@@ -69,11 +82,11 @@ Open the created `tasks.json` file and add JSON tasks definitions, as in the exa
 }
 ```
 
-Apart from shell commands, Run Task also supports running a Sublime Text window command. For example, for a task that launches a terminal, one may want to use a `open_terminal_project_folder` window command from [Terminal](https://github.com/wbond/sublime_terminal) package. This can be achieved with the following task definition:
+Apart from shell commands, Run Task also supports running Sublime Text window commands. For example, for a task that launches a terminal, one may want to use a `open_terminal_project_folder` window command from [Terminal](https://github.com/wbond/sublime_terminal) package. This can be achieved with the following task definition:
 
 ```json
 {
-    "label": "Start Local Web Server",
+    "name": "Start Local Web Server",
     "type": "sublime",
     "command": "open_terminal_project_folder",
     "args": {
@@ -90,7 +103,7 @@ Run Task supports the following set of task properties and values:
 
 | Property           | Required | Type                     | Value                                               |
 |--------------------|----------|--------------------------|-----------------------------------------------------|
-| label              | YES      | string                   | The task's name displayed in Sublime's quick panel. |
+| name              | YES      | string                   | The task's name displayed in Sublime's quick panel. |
 | type               | YES      | string                   | The task's type. It can either be `shell` or `sublime`. If `shell` is specified, the `command` is interpreted as a shell command to execute. If `sublime` is specified, the `command` is interpreted as a Sublime Text window command to execute. |
 | command            | YES      | string                   | The command to execute. It must be a valid shell command or Sublime Text window command name, depending on the `type` specified. For the shell commmand to work, the specified executable must be in your _PATH_. |
 | args               | NO       | string, array, or object | The arguments to be passed to the `command`. For a task of type `shell` it can either be a string or array. For a task of type `sublime` it must be a JSON object. |
@@ -111,7 +124,7 @@ Example:
 
 ```json
 {
-    "label": "Variable Substitution Test",
+    "name": "Variable Substitution Test",
     "type": "shell",
     "command": "./Debug/script.sh",
     "args": ["CWD:", "${cwd}"],
