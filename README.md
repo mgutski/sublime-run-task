@@ -13,6 +13,12 @@ Run automated workspace tasks from Sublime Text 3 quick panel. With Run Task you
 
 ## Installation
 
+### Package Control
+
+The recommended way to install Run Task package is via [Package Control](https://packagecontrol.io/). 
+Just use the `Package Control: Install Package` command from the command palette and search for `Run Task`.
+By selecting this installation method any package updates will be installed automatically.
+
 ### Manual
 
 Run Task package can be installed manually by cloning this Git repository into your Sublime Text packages installation directory. Please note that by selecting this installation method any package updates will have to be installed manually.
