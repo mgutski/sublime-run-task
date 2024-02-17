@@ -27,6 +27,7 @@ SUBLIME_TASK_TYPE = "sublime"
 SHELL_TASK_TYPE = "shell"
 
 VARIABLE_CWD = "${cwd}"
+VARIABLE_FILE = "${file}"
 
 
 class OSUtils():
@@ -123,13 +124,14 @@ class OutputPanel():
 
 
 class ShellTaskThread(threading.Thread):
-	def __init__(self, task_name, window, args=[], cwd=None, show_output_panel=False):
+	def __init__(self, task_name, window, args=[], cwd=None, show_output_panel=False, has_file=False):
 		super(ShellTaskThread, self).__init__(self)
 		self.task_name = task_name
 		self.window = window
 		self.args = args
 		self.cwd = cwd
 		self.show_output_panel = show_output_panel
+		self.has_file = has_file
 
 	def run(self):
 		if self.show_output_panel:
@@ -146,9 +148,12 @@ class ShellTaskThread(threading.Thread):
 					finish_msg = "| Task finished with return code " + str(process.poll()) + " |"
 					finish_msg = "\n" + ("-" * len(finish_msg)) + "\n" + finish_msg + "\n" + ("-" * len(finish_msg))
 					output_panel.write(finish_msg)
+					if self.has_file:
+						self.window.focus_view(self.window.active_view())
 					break
 				if out_line:
 					output_panel.write(out_line)
+
 		else:
 			try:
 				subprocess.Popen(self.args, cwd=self.cwd)
@@ -205,6 +210,8 @@ class Task():
 	show_output_panel = property(get_show_output_panel, set_show_output_panel)
 
 	def execute(self, window, cwd):
+		variables = window.extract_variables()
+		file = variables['file']
 		if self.task_type == SUBLIME_TASK_TYPE:
 			window.run_command(self.command, self.args)
 		elif self.task_type == SHELL_TASK_TYPE:
@@ -213,9 +220,12 @@ class Task():
 				args.extend(self.args)
 			elif type(self.args) is str:
 				args.extend(shlex.split(self.args.strip()))
+			has_file = False
 			for idx, arg in enumerate(args):
 				args[idx] = arg.replace(VARIABLE_CWD, cwd)
-			ShellTaskThread(self.name, window, args, cwd, self.show_output_panel).start()
+				has_file = has_file or VARIABLE_FILE in args[idx]
+				args[idx] = arg.replace(VARIABLE_FILE, file)
+			ShellTaskThread(self.name, window, args, cwd, self.show_output_panel, has_file).start()
 
 
 class TaskParser():
