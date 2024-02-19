@@ -155,10 +155,30 @@ class ShellTaskThread(threading.Thread):
 					output_panel.write(out_line)
 
 		else:
-			try:
-				subprocess.Popen(self.args, cwd=self.cwd)
-			except Exception as ex:
-				sublime.error_message(ErrorMessage.task_execution_failed(self.task_name, str(ex)))
+			if not self.has_file:
+				try:
+					subprocess.Popen(self.args, cwd=self.cwd)
+				except Exception as ex:
+					sublime.error_message(ErrorMessage.task_execution_failed(self.task_name, str(ex)))
+			else:
+				try:
+					si = subprocess.STARTUPINFO()
+					si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+					si.wShowWindow = subprocess.SW_HIDE # default
+					process = subprocess.Popen(self.args, bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=self.cwd, universal_newlines=True, startupinfo=si)
+				except Exception as ex:
+					sublime.error_message(ErrorMessage.task_execution_failed(self.task_name, str(ex)))
+				while True:
+					out_line = process.stdout.readline()
+					if out_line:
+						print(out_line)
+
+					if out_line == '' and process.poll() is not None:
+						if self.has_file:
+							self.window.focus_view(self.window.active_view())
+						break
+
+
 
 
 class Task():
