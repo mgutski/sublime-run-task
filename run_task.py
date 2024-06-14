@@ -6,7 +6,8 @@ import json
 import subprocess
 import shlex
 import threading
-
+import sys
+import re
 
 PLUGIN_NAME = "Run Task"
 
@@ -368,16 +369,24 @@ class RunTaskCommand(sublime_plugin.WindowCommand):
 		self.tasks = []
 
 		project_file = self.window.project_file_name()
+
 		if project_file:
 			with open(project_file, "r") as fp:
+
 				try:
-					tasks_json = json.load(fp)
+					json_str = fp.read()
+					# sublime supports trailing commas in the json files, json doesn't. Fix this here
+					
+					pattern = r',\s*([\]}])'
+					json_str_fixed = re.sub(pattern, r'\1', json_str)
+					tasks_json = json.loads(json_str_fixed)
 					self.tasks, parse_error_msg = TaskParser().parse_tasks(tasks_json)
 					if parse_error_msg is not None:
 						sublime.error_message(parse_error_msg)
 						return
-				except ValueError:
-					sublime.error_message(ErrorMessage.invalid_json())
+				except ValueError as error:
+					error_message = "JSON decoding error: %s " % str(error)
+					sublime.error_message(error_message)
 					return
 			if len(self.tasks) > 0:
 				labels = list(map(lambda task: task.name, self.tasks))
