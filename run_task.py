@@ -69,8 +69,10 @@ class ErrorMessage():
 	CHECK_CONFIGURATION_FILE = 'Please check the .sublime-project file.'
 
 	@staticmethod
-	def invalid_json():
-		return PLUGIN_NAME + ': Invalid JSON. ' + ErrorMessage.CHECK_CONFIGURATION_FILE
+	def invalid_json(json_error_message):
+		error_message = PLUGIN_NAME + ': Invalid JSON. ' + ErrorMessage.CHECK_CONFIGURATION_FILE
+		error_message += '\n\nError message: ' + json_error_message
+		return error_message	
 
 	@staticmethod
 	def invalid_json_object(expected_type_name=None):
@@ -369,24 +371,23 @@ class RunTaskCommand(sublime_plugin.WindowCommand):
 		self.tasks = []
 
 		project_file = self.window.project_file_name()
+		if not project_file:
+			project_file = OSUtils.find_file_with_pattern(self.workspace, PROJECT_FILE_NAME_PATTERN)
+
 
 		if project_file:
 			with open(project_file, "r") as fp:
 
 				try:
 					json_str = fp.read()
-					# sublime supports trailing commas in the json files, json doesn't. Fix this here
-					
-					pattern = r',\s*([\]}])'
-					json_str_fixed = re.sub(pattern, r'\1', json_str)
-					tasks_json = json.loads(json_str_fixed)
+					tasks_json = sublime.decode_value(json_str)
+
 					self.tasks, parse_error_msg = TaskParser().parse_tasks(tasks_json)
 					if parse_error_msg is not None:
 						sublime.error_message(parse_error_msg)
 						return
 				except ValueError as error:
-					error_message = "JSON decoding error: %s " % str(error)
-					sublime.error_message(error_message)
+					sublime.error_message(ErrorMessage.invalid_json(str(error)))						
 					return
 			if len(self.tasks) > 0:
 				labels = list(map(lambda task: task.name, self.tasks))
