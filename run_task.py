@@ -6,7 +6,8 @@ import json
 import subprocess
 import shlex
 import threading
-
+import sys
+import re
 
 PLUGIN_NAME = "Run Task"
 
@@ -27,6 +28,7 @@ SUBLIME_TASK_TYPE = "sublime"
 SHELL_TASK_TYPE = "shell"
 
 VARIABLE_CWD = "${cwd}"
+VARIABLE_FILE = "${file}"
 
 
 class OSUtils():
@@ -67,8 +69,10 @@ class ErrorMessage():
 	CHECK_CONFIGURATION_FILE = 'Please check the .sublime-project file.'
 
 	@staticmethod
-	def invalid_json():
-		return PLUGIN_NAME + ': Invalid JSON. ' + ErrorMessage.CHECK_CONFIGURATION_FILE
+	def invalid_json(json_error_message):
+		error_message = PLUGIN_NAME + ': Invalid JSON. ' + ErrorMessage.CHECK_CONFIGURATION_FILE
+		error_message += '\n\nError message: ' + json_error_message
+		return error_message	
 
 	@staticmethod
 	def invalid_json_object(expected_type_name=None):
@@ -123,13 +127,14 @@ class OutputPanel():
 
 
 class ShellTaskThread(threading.Thread):
-	def __init__(self, task_name, window, args=[], cwd=None, show_output_panel=False):
+	def __init__(self, task_name, window, args=[], cwd=None, show_output_panel=False, has_file=False):
 		super(ShellTaskThread, self).__init__(self)
 		self.task_name = task_name
 		self.window = window
 		self.args = args
 		self.cwd = cwd
 		self.show_output_panel = show_output_panel
+		self.has_file = has_file
 
 	def run(self):
 		if self.show_output_panel:
@@ -146,14 +151,37 @@ class ShellTaskThread(threading.Thread):
 					finish_msg = "| Task finished with return code " + str(process.poll()) + " |"
 					finish_msg = "\n" + ("-" * len(finish_msg)) + "\n" + finish_msg + "\n" + ("-" * len(finish_msg))
 					output_panel.write(finish_msg)
+					if self.has_file:
+						self.window.focus_view(self.window.active_view())
 					break
 				if out_line:
 					output_panel.write(out_line)
+
 		else:
-			try:
-				subprocess.Popen(self.args, cwd=self.cwd)
-			except Exception as ex:
-				sublime.error_message(ErrorMessage.task_execution_failed(self.task_name, str(ex)))
+			if not self.has_file:
+				try:
+					subprocess.Popen(self.args, cwd=self.cwd)
+				except Exception as ex:
+					sublime.error_message(ErrorMessage.task_execution_failed(self.task_name, str(ex)))
+			else:
+				try:
+					si = subprocess.STARTUPINFO()
+					si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+					si.wShowWindow = subprocess.SW_HIDE # default
+					process = subprocess.Popen(self.args, bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=self.cwd, universal_newlines=True, startupinfo=si)
+				except Exception as ex:
+					sublime.error_message(ErrorMessage.task_execution_failed(self.task_name, str(ex)))
+				while True:
+					out_line = process.stdout.readline()
+					if out_line:
+						print(out_line)
+
+					if out_line == '' and process.poll() is not None:
+						if self.has_file:
+							self.window.focus_view(self.window.active_view())
+						break
+
+
 
 
 class Task():
@@ -205,6 +233,8 @@ class Task():
 	show_output_panel = property(get_show_output_panel, set_show_output_panel)
 
 	def execute(self, window, cwd):
+		variables = window.extract_variables()
+		file = variables['file']
 		if self.task_type == SUBLIME_TASK_TYPE:
 			window.run_command(self.command, self.args)
 		elif self.task_type == SHELL_TASK_TYPE:
@@ -213,9 +243,12 @@ class Task():
 				args.extend(self.args)
 			elif type(self.args) is str:
 				args.extend(shlex.split(self.args.strip()))
+			has_file = False
 			for idx, arg in enumerate(args):
 				args[idx] = arg.replace(VARIABLE_CWD, cwd)
-			ShellTaskThread(self.name, window, args, cwd, self.show_output_panel).start()
+				has_file = has_file or VARIABLE_FILE in args[idx]
+				args[idx] = arg.replace(VARIABLE_FILE, file)
+			ShellTaskThread(self.name, window, args, cwd, self.show_output_panel, has_file).start()
 
 
 class TaskParser():
@@ -337,17 +370,24 @@ class RunTaskCommand(sublime_plugin.WindowCommand):
 		self.workspace = folders[0]
 		self.tasks = []
 
-		project_file = OSUtils.find_file_with_pattern(self.workspace, PROJECT_FILE_NAME_PATTERN)
+		project_file = self.window.project_file_name()
+		if not project_file:
+			project_file = OSUtils.find_file_with_pattern(self.workspace, PROJECT_FILE_NAME_PATTERN)
+
+
 		if project_file:
 			with open(project_file, "r") as fp:
+
 				try:
-					tasks_json = json.load(fp)
+					json_str = fp.read()
+					tasks_json = sublime.decode_value(json_str)
+
 					self.tasks, parse_error_msg = TaskParser().parse_tasks(tasks_json)
 					if parse_error_msg is not None:
 						sublime.error_message(parse_error_msg)
 						return
-				except ValueError:
-					sublime.error_message(ErrorMessage.invalid_json())
+				except ValueError as error:
+					sublime.error_message(ErrorMessage.invalid_json(str(error)))						
 					return
 			if len(self.tasks) > 0:
 				labels = list(map(lambda task: task.name, self.tasks))
