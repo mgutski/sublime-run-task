@@ -134,11 +134,26 @@ class ShellTaskThread(threading.Thread):
 		self.show_output_panel = show_output_panel
 
 	def run(self):
+		if OSUtils.is_windows():
+			si = subprocess.STARTUPINFO()
+			si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+			si.wShowWindow = subprocess.SW_HIDE
+		else:
+			si = None
+
 		if self.show_output_panel:
 			output_panel = OutputPanel(self.window)
 			output_panel.show()
 			try:
-				process = subprocess.Popen(self.args, bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=self.cwd, universal_newlines=True)
+				process = subprocess.Popen(
+					self.args,
+					bufsize=1,
+					stdout=subprocess.PIPE,
+					stderr=subprocess.STDOUT,
+					cwd=self.cwd,
+					universal_newlines=True,
+					startupinfo=si
+				)
 			except Exception as ex:
 				sublime.error_message(ErrorMessage.task_execution_failed(self.task_name, str(ex)))
 				return
@@ -153,7 +168,11 @@ class ShellTaskThread(threading.Thread):
 					output_panel.write(out_line)
 		else:
 			try:
-				subprocess.Popen(self.args, cwd=self.cwd)
+				subprocess.Popen(
+					self.args,
+					cwd=self.cwd,
+					startupinfo=si
+				)
 			except Exception as ex:
 				sublime.error_message(ErrorMessage.task_execution_failed(self.task_name, str(ex)))
 
