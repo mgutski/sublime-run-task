@@ -2,7 +2,6 @@ import sublime
 import sublime_plugin
 import fnmatch
 import os
-import json
 import subprocess
 import shlex
 import threading
@@ -67,8 +66,10 @@ class ErrorMessage():
 	CHECK_CONFIGURATION_FILE = 'Please check the .sublime-project file.'
 
 	@staticmethod
-	def invalid_json():
-		return PLUGIN_NAME + ': Invalid JSON. ' + ErrorMessage.CHECK_CONFIGURATION_FILE
+	def invalid_json(json_error_message):
+		error_message = PLUGIN_NAME + ': Invalid JSON. ' + ErrorMessage.CHECK_CONFIGURATION_FILE
+		error_message += '\n\nError message: ' + json_error_message
+		return error_message
 
 	@staticmethod
 	def invalid_json_object(expected_type_name=None):
@@ -344,13 +345,14 @@ class RunTaskCommand(sublime_plugin.WindowCommand):
 		if project_file:
 			with open(project_file, "r") as fp:
 				try:
-					tasks_json = json.load(fp)
+					json_str = fp.read()
+					tasks_json = sublime.decode_value(json_str)
 					self.tasks, parse_error_msg = TaskParser().parse_tasks(tasks_json)
 					if parse_error_msg is not None:
 						sublime.error_message(parse_error_msg)
 						return
-				except ValueError:
-					sublime.error_message(ErrorMessage.invalid_json())
+				except ValueError as error:
+					sublime.error_message(ErrorMessage.invalid_json(str(error)))
 					return
 			if len(self.tasks) > 0:
 				labels = list(map(lambda task: task.name, self.tasks))
