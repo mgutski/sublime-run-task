@@ -25,7 +25,8 @@ JSON_TASK_SHOW_OUTPUT_PANEL_DEFAULT_VALUE = True
 SUBLIME_TASK_TYPE = "sublime"
 SHELL_TASK_TYPE = "shell"
 
-VARIABLE_CWD = "${cwd}"
+VARIABLE_CWD = "cwd"
+VARIABLE_FILE = "file"
 
 
 class OSUtils():
@@ -214,8 +215,8 @@ class Task():
 				args.extend(self.args)
 			elif type(self.args) is str:
 				args.extend(shlex.split(self.args.strip()))
-			for idx, arg in enumerate(args):
-				args[idx] = arg.replace(VARIABLE_CWD, cwd)
+			variables = window.extract_variables()
+			args = sublime.expand_variables(args, {VARIABLE_CWD: cwd, VARIABLE_FILE: variables[VARIABLE_FILE]})
 			ShellTaskThread(self.name, window, args, cwd, self.show_output_panel).start()
 
 
