@@ -337,7 +337,10 @@ class RunTaskCommand(sublime_plugin.WindowCommand):
 		self.workspace = folders[0]
 		self.tasks = []
 
-		project_file = OSUtils.find_file_with_pattern(self.workspace, PROJECT_FILE_NAME_PATTERN)
+		project_file = self.window.project_file_name()
+		if not project_file:
+			project_file = OSUtils.find_file_with_pattern(self.workspace, PROJECT_FILE_NAME_PATTERN)
+
 		if project_file:
 			with open(project_file, "r") as fp:
 				try:
